@@ -51,7 +51,6 @@ def gen_inputlist_map(filename):
   inputmap['nproc_ob']           = 1
   inputmap['nproc_rgrid']        = [1,1,1]
   inputmap['yn_ffte']            = False
-  inputmap['yn_scalapack']       = False
   inputmap['process_allocation'] = 'grid_sequential'
   with open(filename) as f:
     number_pattern      = re.compile(r'\d+')
@@ -62,18 +61,14 @@ def gen_inputlist_map(filename):
     nproc_k_pattern     = re.compile(r'\s*nproc_k\s*=\s*\d+')
     nproc_ob_pattern    = re.compile(r'\s*nproc_ob\s*=\s*\d+')
     nproc_rgrid_pattern = re.compile(r'\s*nproc_rgrid\s*=\s*\d+')
-    nstate_pattern      = re.compile(r'\s*nstate\s*=\s*\d+')
     al_pattern          = re.compile(r'\s*al\s*=\s*\d+')
     dl_pattern          = re.compile(r'\s*dl\s*=\s*\d+')
     num_rgrid_pattern   = re.compile(r'\s*num_rgrid\s*=\s*\d+')
     yn_ffte_pattern     = re.compile(r'\s*yn_ffte\s*=\s*')
-    yn_scalapack_pattern= re.compile(r'\s*yn_scalapack\s*=\s*')
     proc_alloc_pattern  = re.compile(r'\s*process_allocation\s*=\s*')
     for s in f:
       if theory_pattern.match(s):
         inputmap['theory'] = string_pattern.search(s).group().strip('\'').lower()
-      elif nstate_pattern.match(s):
-        inputmap['nstate'] = int(number_pattern.search(s).group())
       elif nproc_k_pattern.match(s):
         inputmap['nproc_k'] = int(number_pattern.search(s).group())
       elif nproc_ob_pattern.match(s):
@@ -100,8 +95,6 @@ def gen_inputlist_map(filename):
         inputmap['num_rgrid'] = dims
       elif yn_ffte_pattern.match(s):
         inputmap['yn_ffte'] = to_boolean(yn_pattern.search(s).group())
-      elif yn_scalapack_pattern.match(s):
-        inputmap['yn_scalapack'] = to_boolean(yn_pattern.search(s).group())
       elif proc_alloc_pattern.match(s):
         inputmap['process_allocation'] = string_pattern.search(s).group().strip('\'').lower()
   return inputmap
@@ -112,9 +105,6 @@ def print_inputlists(inputmap):
   print '  nproc_ob = {}'.format(inputmap['nproc_ob'])
   print '  nproc_rgrid = {},{},{}'.format(*inputmap['nproc_rgrid'])
   print '  process_allocation = \'{}\''.format(inputmap['process_allocation'])
-  print '/'
-  print '&system'
-  print '  nstate = {}'.format(inputmap['nstate'])
   print '/'
   print '&rgrid'
   print '  num_rgrid = {},{},{}'.format(*inputmap['num_rgrid'])
@@ -146,26 +136,6 @@ def check_ffte_condition_prime_factors(num_rgrid):
   return True
 
 
-# ScaLAPACK
-def get_sl_process_grid_size(n, nprocs):
-  npcol = int(math.sqrt(float(nprocs)))
-  npcol = npcol + (npcol % 2)
-  for ii in range(0,100):
-    nprow = nprocs / npcol
-    if (nprow*npcol == nprocs):
-      break
-    npcol = npcol + 2
-  return nprow,npcol
-
-def get_sl_blocking_factor(n, nprow, npcol):
-  k1 = (n+nprow-1)/nprow
-  k2 = (n+npcol-1)/npcol
-  mb = min(k1,k2)
-  nb = mb
-  return mb,nb
-
-
-
 def get_nproc_rgrid(nprocs, nprocs_per_node, num_rgrid, is_ffte):
   if num_rgrid[0] % nprocs_per_node != 0:
     print '[INFO] num_rgrid[0] % nprocs_per_node is not divided.'
@@ -187,17 +157,51 @@ def get_nproc_rgrid(nprocs, nprocs_per_node, num_rgrid, is_ffte):
   return [nprocs_per_node, ny, nz]
 
 
+def prime_factorize(n):
+  a = []
+  while n % 2 == 0:
+    a.append(2)
+    n //= 2
+  f = 3
+  while f * f <= n:
+    if n % f == 0:
+      a.append(f)
+      n //= f
+    else:
+      f += 2
+  if n != 1:
+    a.append(n)
+  return a
+
+def determine_node_shape(nproc_k, nproc_ob, nproc_rgrid, nnodes, nprocs_per_node, process_order):
+  if process_order == 'grid_sequential':
+    PS    = nproc_ob*nproc_k
+    shape = [nproc_rgrid[0], nproc_rgrid[1], nproc_rgrid[2]]
+  else:
+    PS    = nproc_rgrid[0]
+    shape = [nproc_ob*nproc_k, nproc_rgrid[1], nproc_rgrid[2]]
+
+  # determine # of sub-process grid
+  # PS = NS[0] * NS[1] * NS[2]
+  if PS == 1:
+    NS = [1, 1, 1]
+  else:
+    factor = prime_factorize(PS)
+    
+
+  shape[0] = shape[0] * NS[0] / nprocs_per_node
+  shape[1] = shape[1] * NS[1]
+  shape[2] = shape[2] * NS[2]
+
+  return shape
+
+
 if __name__ == '__main__':
   if len(sys.argv) < 4:
     print '[Usage] ./{} <SALMON inputfile> <required # of node> <required # of procs/node>'.format(sys.argv[0])
     fail_exit()
 
   inputmap = gen_inputlist_map(sys.argv[1])
-
-
-  if inputmap['theory'] != 'dft':
-    print 'Theory {} does not support yet'.format(inputmap['theory'])
-
 
   # logical checking...
   if not 'num_rgrid' in inputmap.keys():
@@ -222,8 +226,14 @@ if __name__ == '__main__':
     inputmap['nproc_k']     = nproc_k
     inputmap['nproc_ob']    = nproc_ob
     inputmap['nproc_rgrid'] = nproc_rgrid
-    if nproc_ob >= nprocs_per_node:
-      inputmap['process_allocation'] = 'orbital_sequential'
+
+  theory = inputmap['theory']
+  if theory == 'dft' or theory == 'dft_md':
+    # DFT prefers orbital_sequential
+    inputmap['process_allocation'] = 'orbital_sequential'
+  else:
+    # TDDFT prefers grid_sequential
+    inputmap['process_allocation'] = 'grid_sequential'
 
 
   # FFTE checking...
@@ -244,39 +254,6 @@ if __name__ == '__main__':
       fail_exit()
 
 
-  # ScaLAPACK checking...
-  if inputmap['yn_scalapack']:
-    n      = inputmap['nstate']
-    nprocs = inputmap['nproc_ob']
-    nprow,npcol = get_sl_process_grid_size(n, nprocs)
-    if (nprow*npcol != nprocs):
-      print '[ScaLAPACK] nprow*npcol = {} != {}'.format(nprow*npcol,nprocs)
-      print '            please check the nproc_ob'
-      fail_exit()
-    mb,nb = get_sl_blocking_factor(n, nprow, npcol)
-    if (nb*npcol != n):
-      n = max(nb*npcol, n)
-      n = min(n, (nb+1)*npcol)
-      mb,nb = get_sl_blocking_factor(n, nprow, npcol)
-    if (n != inputmap['nstate']):
-      print '[ScaLAPACK]'
-      print 'nstate should be changed from {} to {}'.format(inputmap['nstate'],n)
-      inputmap['nstate'] = n
-    print '[ScaLAPACK]'
-    print 'process grid map (row,col) = ({},{})'.format(nprow,npcol)
-    print 'blocking factor  (row,col) = ({},{})'.format(mb,nb)
-
-
-  print '[INFO]'
-  print 'wave function size per MPI process'
-  for i in range(0,3):
-    print 'num_rgrid[{}] / nproc_rgrid[{}] = {}'.format(i,i,float(inputmap['num_rgrid'][i])/inputmap['nproc_rgrid'][i])
-  print '# of orbital = {}'.format(float(inputmap['nstate'])/inputmap['nproc_ob'])
-
-  sx = inputmap['nproc_ob'] * inputmap['nproc_k'] / nprocs_per_node
-  sy = list_prod(inputmap['nproc_rgrid'])
-
-
   print ''
   print '# =============================================== #'
   print 'Probably suitable parameters for large scale system.'
@@ -286,9 +263,35 @@ if __name__ == '__main__':
 
   print ''
   print '# =============================================== #'
-  print 'If you use mesh-torus network type system,'
+  print 'If you use Tofu-D network or other 3-D network.'
   print 'probably, the following node shape is suitable to run the application.'
   print ''
-  print 'NXxNY = {}x{}'.format(sx,sy)
-  print 'NX = (nproc_ob * nproc_k) / # of process per node'
-  print 'NY = product(nproc_rgrid)'
+  print '  Requested network shape = (PX, PY, PZ, PW)'
+  print '  Tofu-network shape      = (TX, TY, TZ)'
+  print '  Process shape           = (TX*PPN, TY, TZ)'
+  print ''
+  print '  (PX, PY, PZ) = nproc_rgrid'
+  print '  PW           = nproc_ob*nproc_k'
+  print '  PPN          = # of process/node'
+  if inputmap['process_allocation'] == 'grid_sequential':
+    print '  PW  = PW1*PW2*PW3'
+    print '  PW1 = TX*PPN / PX'
+    print '  PW2 = TY     / PY'
+    print '  PW3 = TZ     / PZ'
+    print '  TX  = PX*PW1 / PPN'
+    print '  TY  = PY*PW2'
+    print '  TZ  = PZ*PW3'
+  else:
+    print '  PX  = PX1*PX2*PX3'
+    print '  PX1 = TX*PPN / PW'
+    print '  PX2 = TY     / PY'
+    print '  PX3 = TZ     / PZ'
+    print '  TX  = PW*PX1 / PPN'
+    print '  TY  = PY*PX2'
+    print '  TZ  = PZ*PX3'
+  print ''
+  print 'We determine the node shape to be as close to a regular hexahedron as possible.'
+  shape = determine_node_shape(inputmap['nproc_k'], inputmap['nproc_ob'], inputmap['nproc_rgrid'] \
+      , nnodes, nprocs_per_node, inputmap['process_allocation'])
+
+  print '(TX, TY, TZ) = ({}, {}, {})'.format(shape[0], shape[1], shape[2])
