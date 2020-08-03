@@ -37,7 +37,7 @@ subroutine gscg_rwf(ncg,mg,system,info,stencil,ppg,vlocal,srg,spsi,cg)
   type(s_cg)                    :: cg
   !
   integer,parameter :: nd=4
-  integer :: nspin,io,ispin,io_s,io_e,is(3),ie(3),iy,iz
+  integer :: nspin,io,ispin,io_s,io_e,is(3),ie(3),iy,iz,ns,ne
   integer :: iter
   real(8),dimension(system%nspin,system%no) :: sum,xkxk,xkHxk,xkHpk,pkHpk,gkgk,uk,ev,cx,cp,zs
 
@@ -76,12 +76,15 @@ subroutine gscg_rwf(ncg,mg,system,info,stencil,ppg,vlocal,srg,spsi,cg)
   call timer_end(LOG_GSCG_ISOLATED_HPSI)
 
   call timer_begin(LOG_GSCG_ISOLATED_CALC)
-  call inner_product(mg,system,info,cg%xk,cg%hxk,xkHxk)
+  call inner_product(mg,system,info,cg%xk,cg%hxk,xkHxk,io_s,io_e)
+
+  Band : do io=io_s,io_e
+    ns = io
+    ne = io
 
   Iteration : do iter=1,Ncg
 
-!$omp parallel do private(io,ispin,iz,iy) collapse(4)
-    do io=io_s,io_e
+!$omp parallel do private(ispin,iz,iy) collapse(3)
     do ispin=1,nspin
     do iz=is(3),ie(3)
     do iy=is(2),ie(2)
@@ -91,28 +94,19 @@ subroutine gscg_rwf(ncg,mg,system,info,stencil,ppg,vlocal,srg,spsi,cg)
     end do
     end do
     end do
-    end do
 
 !    call orthogonalization(mg,system,info,spsi,cg%gk)
-    call inner_product(mg,system,info,cg%gk,cg%gk,sum)
+    call inner_product(mg,system,info,cg%gk,cg%gk,sum,ns,ne)
 
     if(iter==1)then
       uk = 0d0
     else
-!$omp parallel do private(io,ispin)
-      do io=io_s,io_e
       do ispin=1,nspin
-        if (abs(gkgk(ispin,io)) > 1d-16) then
-          uk(ispin,io) = sum(ispin,io) / gkgk(ispin,io)
-        else
-          uk(ispin,io) = 0d0
-        end if
-      end do
+        uk(ispin,io) = sum(ispin,io) / gkgk(ispin,io)
       end do
     end if
 
-!$omp parallel do private(io,ispin,iz,iy) collapse(4)
-    do io=io_s,io_e
+!$omp parallel do private(ispin,iz,iy) collapse(3)
     do ispin=1,nspin
     do iz=is(3),ie(3)
     do iy=is(2),ie(2)
@@ -122,13 +116,11 @@ subroutine gscg_rwf(ncg,mg,system,info,stencil,ppg,vlocal,srg,spsi,cg)
     end do
     end do
     end do
-    end do
 
     gkgk = sum
-    call inner_product(mg,system,info,cg%xk,cg%pk,zs)
+    call inner_product(mg,system,info,cg%xk,cg%pk,zs,ns,ne)
 
-!$omp parallel do private(io,ispin,iz,iy) collapse(4)
-    do io=io_s,io_e
+!$omp parallel do private(ispin,iz,iy) collapse(3)
     do ispin=1,nspin
     do iz=is(3),ie(3)
     do iy=is(2),ie(2)
@@ -138,12 +130,10 @@ subroutine gscg_rwf(ncg,mg,system,info,stencil,ppg,vlocal,srg,spsi,cg)
     end do
     end do
     end do
-    end do
 
-    call inner_product(mg,system,info,cg%pko,cg%pko,sum)
+    call inner_product(mg,system,info,cg%pko,cg%pko,sum,ns,ne)
 
-!$omp parallel do private(io,ispin,iz,iy) collapse(4)
-    do io=io_s,io_e
+!$omp parallel do private(ispin,iz,iy) collapse(3)
     do ispin=1,nspin
     do iz=is(3),ie(3)
     do iy=is(2),ie(2)
@@ -152,35 +142,25 @@ subroutine gscg_rwf(ncg,mg,system,info,stencil,ppg,vlocal,srg,spsi,cg)
     end do
     end do
     end do
-    end do
     call timer_end(LOG_GSCG_ISOLATED_CALC)
 
     call timer_begin(LOG_GSCG_ISOLATED_HPSI)
-    call hpsi(cg%pko,cg%hwf,info,mg,vlocal,system,stencil,srg,ppg)
+    call hpsi(cg%pko,cg%hwf,info,mg,vlocal,system,stencil,srg,ppg,ns=ns,ne=ne)
     call timer_end(LOG_GSCG_ISOLATED_HPSI)
 
     call timer_begin(LOG_GSCG_ISOLATED_CALC)
-    call inner_product(mg,system,info,cg%xk,cg%hwf,xkHpk)
-    call inner_product(mg,system,info,cg%pko,cg%hwf,pkHpk)
+    call inner_product(mg,system,info,cg%xk,cg%hwf,xkHpk,ns,ne)
+    call inner_product(mg,system,info,cg%pko,cg%hwf,pkHpk,ns,ne)
 
-!$omp parallel do private(io,ispin)
-    do io=io_s,io_e
     do ispin=1,nspin
       ev(ispin,io)=0.5d0*((xkHxk(ispin,io)+pkHpk(ispin,io))   &
                      -sqrt((xkHxk(ispin,io)-pkHpk(ispin,io))**2+4.d0*abs(xkHpk(ispin,io))**2))
-      if (abs(ev(ispin,io) - xkHxk(ispin,io)) > 1d-16) then
-        cx(ispin,io)=xkHpk(ispin,io)/(ev(ispin,io)-xkHxk(ispin,io))
-        cp(ispin,io)=1.d0/sqrt(1.d0+abs(cx(ispin,io))**2)
-        cx(ispin,io)=cx(ispin,io)*cp(ispin,io)
-      else
-        cx(ispin,io) = 1d0
-        cp(ispin,io) = 0d0
-      end if
-    end do
+      cx(ispin,io)=xkHpk(ispin,io)/(ev(ispin,io)-xkHxk(ispin,io))
+      cp(ispin,io)=1.d0/sqrt(1.d0+abs(cx(ispin,io))**2)
+      cx(ispin,io)=cx(ispin,io)*cp(ispin,io)
     end do
 
-!$omp parallel do private(io,ispin,iz,iy) collapse(4)
-    do io=io_s,io_e
+!$omp parallel do private(ispin,iz,iy) collapse(3)
     do ispin=1,nspin
     do iz=is(3),ie(3)
     do iy=is(2),ie(2)
@@ -193,26 +173,24 @@ subroutine gscg_rwf(ncg,mg,system,info,stencil,ppg,vlocal,srg,spsi,cg)
     end do
     end do
     end do
-    end do
 
-    call inner_product(mg,system,info,cg%xk,cg%hxk,xkHxk)
-    call inner_product(mg,system,info,cg%xk,cg%xk,xkxk)
+    call inner_product(mg,system,info,cg%xk,cg%hxk,xkHxk,ns,ne)
+    call inner_product(mg,system,info,cg%xk,cg%xk,xkxk,ns,ne)
 
-!$omp parallel do private(io,ispin,iz,iy) collapse(4)
-    do io=io_s,io_e
     do ispin=1,nspin
-    do iz=is(3),ie(3)
-    do iy=is(2),ie(2)
       if(1d-16 < abs(xkxk(ispin,io)) .and. abs(xkxk(ispin,io)) <= 1d30) then
-        spsi%rwf(is(1):ie(1),iy,iz,ispin,io,1,1) = &
-        & cg%xk%rwf(is(1):ie(1),iy,iz,ispin,io,1,1) / sqrt(xkxk(ispin,io))
+!$omp parallel do private(iz,iy) collapse(2)
+        do iz=is(3),ie(3)
+        do iy=is(2),ie(2)
+          spsi%rwf(is(1):ie(1),iy,iz,ispin,io,1,1) = &
+          & cg%xk%rwf(is(1):ie(1),iy,iz,ispin,io,1,1) / sqrt(xkxk(ispin,io))
+        end do
+        end do
       end if
-    end do
-    end do
-    end do
     end do
 
   end do Iteration
+  end do Band
   call timer_end(LOG_GSCG_ISOLATED_CALC)
 
   return
@@ -283,7 +261,7 @@ subroutine orthogonalization(mg,system,info,psi,gk)
 
 end subroutine orthogonalization
 
-subroutine inner_product(mg,system,info,psi1,psi2,rbox)
+subroutine inner_product(mg,system,info,psi1,psi2,rbox,ns,ne)
   !$ use omp_lib
   implicit none
   type(s_rgrid),intent(in) :: mg
@@ -291,18 +269,21 @@ subroutine inner_product(mg,system,info,psi1,psi2,rbox)
   type(s_parallel_info),intent(in) :: info
   type(s_orbital),intent(in) :: psi1,psi2
   real(8),intent(out) :: rbox(system%nspin,system%no)
+  integer,intent(in) :: ns,ne
   !
-  integer :: io,ispin,nspin
+  integer :: io,ispin,nspin,no
   integer :: ix,iy,iz
   real(8) :: rbox2(system%nspin,system%no)
   real(8) :: sum0
   nspin = system%nspin
 
+  no = ne - ns + 1
+
   rbox2 = 0.d0
-!$OMP parallel do collapse(2) private(io,ispin,sum0,iz,iy,ix)
-  do io=info%io_s,info%io_e
+  do io=ns,ne
   do ispin=1,nspin
     sum0 = 0d0
+!$OMP parallel do collapse(2) private(iz,iy,ix) reduction(+:sum0)
     do iz=mg%is(3),mg%ie(3)
     do iy=mg%is(2),mg%ie(2)
     do ix=mg%is(1),mg%ie(1)
@@ -316,7 +297,7 @@ subroutine inner_product(mg,system,info,psi1,psi2,rbox)
   call timer_end(LOG_GSCG_ISOLATED_CALC)
 
   call timer_begin(LOG_GSCG_ISOLATED_COMM_COLL)
-  call comm_summation(rbox2,rbox,nspin*system%no,info%icomm_r)
+  call comm_summation(rbox2(:,ns:ne),rbox(:,ns:ne),nspin*no,info%icomm_r)
   call timer_end(LOG_GSCG_ISOLATED_COMM_COLL)
 
   call timer_begin(LOG_GSCG_ISOLATED_CALC)

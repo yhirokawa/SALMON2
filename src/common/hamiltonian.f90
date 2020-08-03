@@ -24,7 +24,7 @@ contains
 
 !===================================================================================================================================
 
-SUBROUTINE hpsi(tpsi,htpsi,info,mg,V_local,system,stencil,srg,ppg,ttpsi)
+SUBROUTINE hpsi(tpsi,htpsi,info,mg,V_local,system,stencil,srg,ppg,ttpsi,ns,ne)
   use structures
   use stencil_sub
   use nonlocal_potential
@@ -45,6 +45,7 @@ SUBROUTINE hpsi(tpsi,htpsi,info,mg,V_local,system,stencil,srg,ppg,ttpsi)
   type(s_pp_grid),intent(in) :: ppg
   type(s_orbital)            :: tpsi,htpsi
   type(s_orbital),optional   :: ttpsi
+  integer,intent(in),optional :: ns,ne
   !
   integer :: nspin,ispin,io,ik,im,im_s,im_e,ik_s,ik_e,io_s,io_e,norb,ix,iy,iz
   real(8) :: k_nabt(Nd,3),k_lap0,kAc(3)
@@ -59,8 +60,10 @@ SUBROUTINE hpsi(tpsi,htpsi,info,mg,V_local,system,stencil,srg,ppg,ttpsi)
   ik_e = info%ik_e
   io_s = info%io_s
   io_e = info%io_e
+  if (present(ns)) io_s = ns
+  if (present(ne)) io_e = ne
   nspin = system%nspin
-  norb = Nspin* info%numo * info%numk * info%numm
+  norb = Nspin * (io_e - io_s + 1) * info%numk * info%numm
   
   if_kAc = (yn_periodic=='y')
   if_singlescale = allocated(system%Ac_micro%v)
@@ -103,7 +106,7 @@ SUBROUTINE hpsi(tpsi,htpsi,info,mg,V_local,system,stencil,srg,ppg,ttpsi)
     call timer_end(LOG_UHPSI_STENCIL)
 
   ! pseudopotential
-    if(yn_jm=='n') call dpseudo(tpsi,htpsi,info,Nspin,ppg)
+    if(yn_jm=='n') call dpseudo(tpsi,htpsi,info,Nspin,ppg,io_s,io_e)
 
   else
 
@@ -325,7 +328,7 @@ SUBROUTINE hpsi(tpsi,htpsi,info,mg,V_local,system,stencil,srg,ppg,ttpsi)
         call pseudo_so(tpsi,htpsi,info,nspin,ppg)
       else
       ! pseudopotential
-        call zpseudo(tpsi,htpsi,info,nspin,ppg)
+        call zpseudo(tpsi,htpsi,info,nspin,ppg,io_s,io_e)
       end if
       if ( PLUS_U_ON ) then
         call pseudo_plusU(tpsi,htpsi,system,info,ppg)

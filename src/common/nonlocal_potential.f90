@@ -23,7 +23,7 @@ module nonlocal_potential
 
 contains
 
-subroutine dpseudo(tpsi,htpsi,info,nspin,ppg)
+subroutine dpseudo(tpsi,htpsi,info,nspin,ppg,ns,ne)
   use structures
   use communication, only: comm_summation
   use timer
@@ -33,6 +33,7 @@ subroutine dpseudo(tpsi,htpsi,info,nspin,ppg)
   type(s_pp_grid),intent(in) :: ppg
   type(s_orbital),intent(in) :: tpsi
   type(s_orbital) :: htpsi
+  integer,intent(in),optional :: ns,ne
   !
   integer :: ispin,io,ik,im,im_s,im_e,ik_s,ik_e,io_s,io_e,norb
   integer :: ilma,ia,j,ix,iy,iz,Nlma,ilocal
@@ -48,7 +49,10 @@ subroutine dpseudo(tpsi,htpsi,info,nspin,ppg)
   ik_e = info%ik_e
   io_s = info%io_s
   io_e = info%io_e
-  norb = Nspin* info%numo * info%numk * info%numm
+  if (present(ns)) io_s = ns
+  if (present(ne)) io_e = ne
+
+  norb = Nspin* (io_e - io_s + 1) * info%numk * info%numm
 
   Nlma = ppg%Nlma
 
@@ -164,7 +168,7 @@ end subroutine dpseudo
 
 !-----------------------------------------------------------------------------------------------------------------------------------
 
-subroutine zpseudo(tpsi,htpsi,info,nspin,ppg)
+subroutine zpseudo(tpsi,htpsi,info,nspin,ppg,ns,ne)
   use structures
   use timer
   implicit none
@@ -173,6 +177,7 @@ subroutine zpseudo(tpsi,htpsi,info,nspin,ppg)
   type(s_pp_grid),intent(in) :: ppg
   type(s_orbital),intent(in) :: tpsi
   type(s_orbital) :: htpsi
+  integer,intent(in),optional :: ns,ne
   !
   integer :: ispin,io,ik,im,im_s,im_e,ik_s,ik_e,io_s,io_e
   integer :: ilma,ia,j,ix,iy,iz,Nlma,ilocal
@@ -192,6 +197,8 @@ subroutine zpseudo(tpsi,htpsi,info,nspin,ppg)
   ik_e = info%ik_e
   io_s = info%io_s
   io_e = info%io_e
+  if (present(ns)) io_s = ns
+  if (present(ne)) io_e = ne
 
   Nlma = ppg%Nlma
 
@@ -199,7 +206,7 @@ subroutine zpseudo(tpsi,htpsi,info,nspin,ppg)
 
     call timer_end(LOG_UHPSI_PSEUDO)
 
-    call calc_uVpsi_rdivided(nspin,info,ppg,tpsi,uVpsibox,uVpsibox2)
+    call calc_uVpsi_rdivided(nspin,info,ppg,tpsi,uVpsibox,uVpsibox2,io_s,io_e)
 
     call timer_begin(LOG_UHPSI_PSEUDO)
 
@@ -274,7 +281,7 @@ subroutine zpseudo(tpsi,htpsi,info,nspin,ppg)
   return
 end subroutine zpseudo
 
-subroutine calc_uVpsi(nspin,info,ppg,tpsi,uVpsibox)
+subroutine calc_uVpsi(nspin,info,ppg,tpsi,uVpsibox,ns,ne)
   use structures
   use timer
   implicit none
@@ -283,6 +290,8 @@ subroutine calc_uVpsi(nspin,info,ppg,tpsi,uVpsibox)
   type(s_pp_grid),intent(in) :: ppg
   type(s_orbital),intent(in) :: tpsi
   complex(8)    ,allocatable :: uVpsibox (:,:,:,:,:)
+  integer,intent(in),optional :: ns,ne
+  !
   integer :: ispin,io,ik,im,im_s,im_e,ik_s,ik_e,io_s,io_e,norb
   integer :: ilma,ia,j,ix,iy,iz,Nlma
   complex(8) :: uVpsi
@@ -296,7 +305,10 @@ subroutine calc_uVpsi(nspin,info,ppg,tpsi,uVpsibox)
   ik_e = info%ik_e
   io_s = info%io_s
   io_e = info%io_e
-  norb = Nspin* info%numo * info%numk * info%numm
+  if (present(ns)) io_s = ns
+  if (present(ne)) io_e = ne
+
+  norb = Nspin* (io_e - io_s + 1) * info%numk * info%numm
 
   Nlma = ppg%Nlma
 
@@ -334,7 +346,7 @@ subroutine calc_uVpsi(nspin,info,ppg,tpsi,uVpsibox)
   return
 end subroutine calc_uVpsi
 
-subroutine calc_uVpsi_rdivided(nspin,info,ppg,tpsi,uVpsibox,uVpsibox2)
+subroutine calc_uVpsi_rdivided(nspin,info,ppg,tpsi,uVpsibox,uVpsibox2,ns0,ne0)
   use structures
   use timer
 #ifdef FORTRAN_COMPILER_HAS_MPI_VERSION3
@@ -351,6 +363,8 @@ subroutine calc_uVpsi_rdivided(nspin,info,ppg,tpsi,uVpsibox,uVpsibox2)
   type(s_orbital),intent(in) :: tpsi
   complex(8)    ,allocatable :: uVpsibox (:,:,:,:,:)
   complex(8)    ,allocatable :: uVpsibox2(:,:,:,:,:)
+  integer,intent(in),optional :: ns0,ne0
+  !
   integer :: ispin,io,ik,im,im_s,im_e,ik_s,ik_e,io_s,io_e,norb
   integer :: ilma,ia,j,ix,iy,iz,Nlma,ilocal
   complex(8) :: uVpsi
@@ -366,7 +380,10 @@ subroutine calc_uVpsi_rdivided(nspin,info,ppg,tpsi,uVpsibox,uVpsibox2)
   ik_e = info%ik_e
   io_s = info%io_s
   io_e = info%io_e
-  norb = Nspin* info%numo * info%numk * info%numm
+  if (present(ns0)) io_s = ns0
+  if (present(ne0)) io_e = ne0
+
+  norb = Nspin* (io_e - io_s + 1) * info%numk * info%numm
 
   Nlma = ppg%Nlma
 
